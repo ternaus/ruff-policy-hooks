@@ -33,11 +33,19 @@ class RuffConfig:
     select: tuple[str, ...] | None
     extend_select: tuple[str, ...]
 
-    def is_enabled(self, rule: str, relative_path: str) -> bool:
-        """Return whether Ruff enables *rule* for *relative_path*."""
+    def is_globally_enabled(self, rule: str) -> bool:
+        """Return whether Ruff enables *rule* in the repository configuration."""
         selected = self.select if self.select is not None else DEFAULT_SELECT
         selected = selected + self.extend_select
         if not any(selector_covers(selector, rule) for selector in selected):
+            return False
+
+        ignored = tuple(selector for selectors in self.global_ignores for selector in selectors)
+        return not any(selectors_intersect(rule, selector) for selector in ignored)
+
+    def is_enabled(self, rule: str, relative_path: str) -> bool:
+        """Return whether Ruff enables *rule* for *relative_path*."""
+        if not self.is_globally_enabled(rule):
             return False
 
         ignored = tuple(selector for selectors in self.global_ignores for selector in selectors)

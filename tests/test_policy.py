@@ -57,7 +57,7 @@ def test_only_active_rules_are_protected_for_each_path(tmp_path: Path) -> None:
     assert check(tmp_path, policy, "tests/example.py") == []
 
 
-def test_inactive_rules_allow_suppressions(tmp_path: Path) -> None:
+def test_unselected_protected_rule_is_reported(tmp_path: Path) -> None:
     write_ruff_config(tmp_path, "[tool.ruff.lint]\nselect = ['F']\n")
     source = tmp_path / "example.py"
     source.write_text(
@@ -65,15 +65,27 @@ def test_inactive_rules_allow_suppressions(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert check(tmp_path, Policy(rules=("C901",)), "example.py") == []
+    assert check(tmp_path, Policy(rules=("C901",)), "example.py") == [
+        "pyproject.toml: protected Ruff selector is not enabled by global configuration: C901"
+    ]
 
 
-def test_global_ignore_disables_enforcement(tmp_path: Path) -> None:
+def test_global_ignore_of_protected_rule_is_reported(tmp_path: Path) -> None:
     write_ruff_config(tmp_path, "[tool.ruff.lint]\nselect = ['C90']\nignore = ['C901']\n")
     source = tmp_path / "example.py"
     source.write_text("value = 1  # noqa: C901\n", encoding="utf-8")
 
-    assert check(tmp_path, Policy(rules=("C901",)), "example.py") == []
+    assert check(tmp_path, Policy(rules=("C901",)), "example.py") == [
+        "pyproject.toml: protected Ruff selector is not enabled by global configuration: C901"
+    ]
+
+
+def test_configuration_only_change_is_checked(tmp_path: Path) -> None:
+    write_ruff_config(tmp_path, "[tool.ruff.lint]\nselect = ['F']\n")
+
+    assert check(tmp_path, Policy(rules=("C901",)), "pyproject.toml") == [
+        "pyproject.toml: protected Ruff selector is not enabled by global configuration: C901"
+    ]
 
 
 def test_malformed_toml_is_reported(tmp_path: Path) -> None:
@@ -86,4 +98,4 @@ def test_malformed_toml_is_reported(tmp_path: Path) -> None:
     violations = check(tmp_path, Policy(rules=("C901",)), "example.py")
 
     assert len(violations) == 1
-    assert violations[0].startswith("example.py: cannot parse TOML:")
+    assert violations[0].startswith(".ruff.toml: cannot parse TOML:")

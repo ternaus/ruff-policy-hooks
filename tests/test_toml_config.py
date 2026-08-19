@@ -35,6 +35,7 @@ def test_load_standalone_ruff_toml(tmp_path: Path) -> None:
     config = load_ruff_config(config_path)
 
     assert config.global_ignores == (("C901",),)
+    assert not config.is_globally_enabled("C901")
     assert not config.is_enabled("C901", "src/app.py")
 
 
