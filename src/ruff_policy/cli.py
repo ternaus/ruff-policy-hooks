@@ -16,14 +16,14 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     check = commands.add_parser("check", help="check Python files for protected Ruff suppressions")
     check.add_argument(
-        "--forbid", action="append", default=[], help="Ruff selectors protected from suppression when enabled"
+        "--protect", action="append", default=[], help="Ruff selectors protected from suppression when enabled"
     )
     check.add_argument("filenames", nargs="*", help="files supplied by pre-commit")
     return parser
 
 
 def _policy_from_args(args: argparse.Namespace) -> Policy:
-    return policy_from_selectors(args.forbid)
+    return policy_from_selectors(args.protect)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

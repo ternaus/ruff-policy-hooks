@@ -3,8 +3,7 @@ from ruff_policy.selectors import (
     parse_selectors,
     selector_covers,
     selectors_intersect,
-    suppression_hits_forbidden,
-    suppression_is_allowed,
+    suppression_hits_protected,
 )
 
 
@@ -27,6 +26,4 @@ def test_selector_relationships_follow_ruff_prefix_selectors() -> None:
     assert not selector_covers("C901", "C9")
     assert selectors_intersect("C9", "C901")
     assert selectors_intersect("ALL", "PLR0912")
-    assert suppression_hits_forbidden("C901", ("C9",))
-    assert suppression_is_allowed("C901", ("C9",))
-    assert not suppression_is_allowed("C9", ("C901",))
+    assert suppression_hits_protected("C901", ("C9",))

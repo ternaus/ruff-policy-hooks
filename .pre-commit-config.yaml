@@ -3,7 +3,7 @@ repos:
     hooks:
       - id: check-ruff-suppressions-self
         name: Check this repository's Ruff suppression policy
-        entry: python -m ruff_policy check --forbid=C901,PLR0912
+        entry: python -m ruff_policy check --protect=C901,PLR0912
         language: system
         types: [python]
   - repo: https://github.com/astral-sh/ruff-pre-commit

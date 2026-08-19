@@ -19,7 +19,7 @@ def write_ruff_config(tmp_path: Path, content: str) -> None:
     (tmp_path / "pyproject.toml").write_text(content, encoding="utf-8")
 
 
-def test_forbid_mode_rejects_exact_family_and_all_suppressions(tmp_path: Path) -> None:
+def test_protect_mode_rejects_exact_family_and_all_suppressions(tmp_path: Path) -> None:
     write_ruff_config(tmp_path, "[tool.ruff.lint]\nselect = ['C90']\n")
     source = tmp_path / "example.py"
     source.write_text(

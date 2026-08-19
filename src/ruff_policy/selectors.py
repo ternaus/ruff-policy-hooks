@@ -44,11 +44,6 @@ def selectors_intersect(left: str, right: str) -> bool:
     return left == "ALL" or right == "ALL" or left.startswith(right) or right.startswith(left)
 
 
-def suppression_hits_forbidden(suppressed: str, forbidden: Iterable[str]) -> bool:
-    """Return whether a suppression selector overlaps a forbidden selector."""
-    return any(selectors_intersect(suppressed, rule) for rule in forbidden)
-
-
-def suppression_is_allowed(suppressed: str, allowed: Iterable[str]) -> bool:
-    """Return whether an allowlist fully covers a suppression selector."""
-    return any(selector_covers(rule, suppressed) for rule in allowed)
+def suppression_hits_protected(suppressed: str, protected: Iterable[str]) -> bool:
+    """Return whether a suppression selector overlaps a protected selector."""
+    return any(selectors_intersect(suppressed, rule) for rule in protected)

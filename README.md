@@ -50,10 +50,10 @@ Add the hook and pin a release tag:
 ```yaml
 repos:
   - repo: https://github.com/ternaus/ruff-policy-hooks
-    rev: v0.2.0
+    rev: v0.3.0
     hooks:
       - id: check-ruff-suppressions
-        args: [--forbid=C901,PLR0912]
+        args: [--protect=C901,PLR0912]
 ```
 
 The list is intentionally kept in the hook because Ruff does not mark which

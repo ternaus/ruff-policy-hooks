@@ -77,17 +77,17 @@ class PolicyChecker:
                 )
             ]
 
-        forbidden = tuple(
+        protected = tuple(
             selector
             for selector in suppression.selectors
             if any(selectors_intersect(selector, rule) for rule in active_rules)
         )
-        if forbidden:
+        if protected:
             return [
                 Violation(
                     display_path,
                     suppression.line,
-                    f"Ruff suppression disables protected selector(s): {', '.join(forbidden)}",
+                    f"Ruff suppression disables protected selector(s): {', '.join(protected)}",
                 )
             ]
         return []

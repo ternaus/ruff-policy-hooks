@@ -29,5 +29,5 @@ def policy_from_selectors(values: Iterable[str]) -> Policy:
     except ValueError as error:
         raise PolicyConfigError(str(error)) from error
     if not rules:
-        raise PolicyConfigError("--forbid requires at least one selector")
+        raise PolicyConfigError("--protect requires at least one selector")
     return Policy(rules=rules)
