@@ -88,6 +88,26 @@ def test_configuration_only_change_is_checked(tmp_path: Path) -> None:
     ]
 
 
+def test_missing_ruff_configuration_is_reported(tmp_path: Path) -> None:
+    source = tmp_path / "example.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+
+    assert check(tmp_path, Policy(rules=("C901",)), "example.py") == [
+        "example.py: Ruff configuration is required for protected selector(s): C901"
+    ]
+
+
+def test_only_globally_disabled_protected_rules_are_reported(tmp_path: Path) -> None:
+    write_ruff_config(
+        tmp_path,
+        "[tool.ruff.lint]\nselect = ['C90', 'PLR']\nignore = ['PLR0912']\n",
+    )
+
+    assert check(tmp_path, Policy(rules=("C901", "PLR0912", "PLR0915")), "pyproject.toml") == [
+        "pyproject.toml: protected Ruff selector is not enabled by global configuration: PLR0912"
+    ]
+
+
 def test_malformed_toml_is_reported(tmp_path: Path) -> None:
     config = tmp_path / ".ruff.toml"
     config.write_text("[lint\n", encoding="utf-8")

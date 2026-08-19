@@ -33,6 +33,10 @@ class RuffConfig:
     select: tuple[str, ...] | None
     extend_select: tuple[str, ...]
 
+    def _flattened_global_ignores(self) -> tuple[str, ...]:
+        """Return global ignore selectors as one tuple."""
+        return tuple(selector for selectors in self.global_ignores for selector in selectors)
+
     def is_globally_enabled(self, rule: str) -> bool:
         """Return whether Ruff enables *rule* in the repository configuration."""
         selected = self.select if self.select is not None else DEFAULT_SELECT
@@ -40,7 +44,7 @@ class RuffConfig:
         if not any(selector_covers(selector, rule) for selector in selected):
             return False
 
-        ignored = tuple(selector for selectors in self.global_ignores for selector in selectors)
+        ignored = self._flattened_global_ignores()
         return not any(selectors_intersect(rule, selector) for selector in ignored)
 
     def is_enabled(self, rule: str, relative_path: str) -> bool:
@@ -48,7 +52,7 @@ class RuffConfig:
         if not self.is_globally_enabled(rule):
             return False
 
-        ignored = tuple(selector for selectors in self.global_ignores for selector in selectors)
+        ignored = self._flattened_global_ignores()
         ignored += tuple(
             selector
             for target, selectors in self.per_file_ignores

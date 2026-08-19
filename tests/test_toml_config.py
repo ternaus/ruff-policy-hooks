@@ -23,6 +23,7 @@ def test_load_pyproject_old_and_new_ruff_layouts(tmp_path: Path) -> None:
     assert config.extend_select == ("C901",)
     assert config.global_ignores == (("F401",), ("E501",))
     assert config.per_file_ignores == (("tests/*", ("PLR0912",)), ("tools/*", ("F401",)))
+    assert config.is_globally_enabled("C901")
     assert config.is_enabled("C901", "src/app.py")
     assert not config.is_enabled("PLR0912", "tests/app.py")
     assert not config.is_enabled("F401", "tools/app.py")
