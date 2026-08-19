@@ -108,6 +108,20 @@ def test_only_globally_disabled_protected_rules_are_reported(tmp_path: Path) -> 
     ]
 
 
+def test_extended_ruff_configuration_protects_inherited_rule(tmp_path: Path) -> None:
+    base_config = tmp_path / "base.toml"
+    base_config.write_text("[lint]\nselect = ['C90']\n", encoding="utf-8")
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "ruff.toml").write_text("extend = '../base.toml'\n", encoding="utf-8")
+    source = package / "app.py"
+    source.write_text("value = 1  # noqa: C901\n", encoding="utf-8")
+
+    assert check(tmp_path, Policy(rules=("C901",)), "package/app.py") == [
+        "package/app.py:1: Ruff suppression disables protected selector(s): C901"
+    ]
+
+
 def test_malformed_toml_is_reported(tmp_path: Path) -> None:
     config = tmp_path / ".ruff.toml"
     config.write_text("[lint\n", encoding="utf-8")

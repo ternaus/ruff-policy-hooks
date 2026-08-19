@@ -48,3 +48,28 @@ def test_find_ruff_config_walks_to_repository_root(tmp_path: Path) -> None:
     source.write_text("value = 1\n", encoding="utf-8")
 
     assert find_ruff_config(source, tmp_path) == config_path
+
+
+def test_find_ruff_config_skips_pyproject_without_ruff_section(tmp_path: Path) -> None:
+    root_config = tmp_path / "pyproject.toml"
+    root_config.write_text("[tool.ruff.lint]\nselect = ['C90']\n", encoding="utf-8")
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "pyproject.toml").write_text("[project]\nname = 'package'\n", encoding="utf-8")
+    source = package / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+
+    assert find_ruff_config(source, tmp_path) == root_config
+
+
+def test_load_ruff_config_inherits_extended_settings(tmp_path: Path) -> None:
+    base_config = tmp_path / "base.toml"
+    base_config.write_text("[lint]\nselect = ['C90']\n", encoding="utf-8")
+    package = tmp_path / "package"
+    package.mkdir()
+    config_path = package / "ruff.toml"
+    config_path.write_text("extend = '../base.toml'\n", encoding="utf-8")
+
+    config = load_ruff_config(config_path)
+
+    assert config.is_globally_enabled("C901")
