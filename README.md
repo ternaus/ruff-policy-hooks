@@ -1,46 +1,47 @@
 # ruff-policy-hooks
 
-Ruff can find code that is too complex, but a contributor or coding agent can
-silence that warning with `# noqa` or a Ruff ignore setting. This pre-commit
-hook protects the Ruff rules that your repository considers mandatory.
+This pre-commit hook stops `noqa` comments from hiding the Ruff rules that your
+repository uses to control code complexity.
 
-It blocks a commit when a protected rule is disabled in Python code or in a
-Ruff TOML configuration. It does not run Ruff, change files, or calculate code
-complexity.
+You list the protected Ruff selectors in the hook. The hook reads the
+repository's Ruff configuration to decide whether each selector is active for
+the file being checked. Ruff remains the source of truth for that scope.
 
-## What the hook forbids
+The hook does not validate or change Ruff configuration. It does not run Ruff
+or calculate complexity.
 
-With a policy such as `--forbid=C901,PLR0912`, the hook forbids:
+## What it blocks
 
-- `# noqa: C901` and `# ruff: noqa: PLR0912` in Python files;
-- broader selectors such as `C9` or `ALL`, because they also disable a
-  protected rule;
-- Ruff `ignore`, `extend-ignore`, and matching `per-file-ignores` settings;
-- raising `max-complexity` or `max-branches` beyond the configured limits.
-
-The last item is checked only when the corresponding limit is configured. A
-suppression for an unrelated rule remains allowed in `forbid` mode:
+Suppose the hook protects `C901` and Ruff enables that rule for `src/`:
 
 ```python
-unused_import = value  # noqa: F401  — allowed when only C901 is protected
-complex_function()  # noqa: C901  — blocked
+def build_result():  # noqa: C901  # blocked
+    ...
 ```
 
-Blanket suppressions are always blocked. The hook requires a rule name, even
-when a path exception exists:
+When a protected rule is active, the hook also blocks broader selectors such as
+`C9` and `ALL`, and blanket `# noqa` comments, because they hide the protected
+rule.
+
+Suppressions for other rules remain allowed:
 
 ```python
-value = build_value()  # noqa  — blocked
+import optional_module  # noqa: F401  # allowed when F401 is not protected
 ```
 
-With `--deny-all`, every rule suppression is blocked unless that rule is
-explicitly allowlisted. Use this mode when the repository does not want
-silenced Ruff diagnostics at all.
+If Ruff disables `C901` for a path, the hook follows Ruff and allows the
+suppression there:
 
-The hook checks only files passed to it by pre-commit. Therefore, the
-repository's `files` and `exclude` settings decide where the policy applies.
-Run `pre-commit run --all-files` in CI when the whole repository must be
-audited.
+```toml
+[tool.ruff.lint]
+select = ["C90"]
+per-file-ignores = { "tests/*" = ["C901"] }
+```
+
+The same `# noqa: C901` can therefore be allowed in `tests/` and blocked in
+`src/`. The hook checks the Ruff configuration that is nearest to each Python
+file, including `select`, `extend-select`, `ignore`, `extend-ignore`,
+`per-file-ignores`, and `extend-per-file-ignores`.
 
 ## Install with pre-commit
 
@@ -49,71 +50,28 @@ Add the hook and pin a release tag:
 ```yaml
 repos:
   - repo: https://github.com/ternaus/ruff-policy-hooks
-    rev: v0.1.0
+    rev: v0.2.0
     hooks:
       - id: check-ruff-suppressions
         args: [--forbid=C901,PLR0912]
-        files: ^(src/|tools/|pyproject\.toml$)
 ```
 
-## Choose a policy
+The list is intentionally kept in the hook because Ruff does not mark which
+selected rules are important to your repository. The hook protects only those
+selectors, and only where Ruff has them enabled.
 
-Use `--forbid` when only a few Ruff rules are mandatory:
-
-```yaml
-args:
-  - --forbid=C901,PLR0912
-  - --max-complexity=10
-  - --max-branches=12
-```
-
-Use `--deny-all` when every suppression must be explicitly allowed:
-
-```yaml
-args: [--deny-all, --allow=F401,E501]
-```
-
-For path-specific exceptions, keep the policy in a committed file. This
-example permits the protected complexity rules in tests, while keeping them
-forbidden everywhere else:
-
-```toml
-mode = "forbid"
-rules = ["C901", "PLR0912"]
-
-[[path_rules]]
-pattern = "tests/*"
-allow = ["C901", "PLR0912"]
-```
-
-Reference the file from the hook:
-
-```yaml
-args: [--policy-file=.ruff-policy.toml]
-```
-
-A path rule can allow a specific suppression in a matching file or Ruff
-`per-file-ignores` target. It cannot allow a global Ruff ignore. Use pre-commit
-`files` or `exclude` when an entire path should be outside the policy.
-
-Do not combine `--policy-file` with inline policy options. Add
-`require_selected = true` to a `forbid` policy when protected rules must also
-be present in Ruff's `select` configuration.
+The hook receives Python files selected by pre-commit. Use
+`pre-commit run --all-files` in CI when every Python file must be checked.
 
 ## When a commit is blocked
 
-First remove the suppression and simplify or split the code. If the exception
-is intentional, make it narrow: name the exact rule and, when needed, add a
-path-specific allowlist to the policy file. Avoid blanket `# noqa` comments and
-`ALL`; they hide more diagnostics than the exception explains.
+Remove the suppression and simplify or split the code. If the rule is not
+relevant for a path, configure that exception in Ruff's normal
+`per-file-ignores`; the hook will follow it.
 
-## Supported Ruff configuration
-
-The hook reads `pyproject.toml`, `ruff.toml`, and `.ruff.toml`, in both the
-older `[tool.ruff]` layout and the newer `[tool.ruff.lint]` layout. It checks
-`ignore`, `extend-ignore`, `per-file-ignores`, and
-`extend-per-file-ignores`, plus the optional complexity limits and selection
-requirement described above.
+The hook does not block suppressions for rules outside its protected list. It
+also does not block changes to `max-complexity`, `max-branches`, or other Ruff
+settings.
 
 ## Local development
 
@@ -127,5 +85,5 @@ ruff format --check .
 pre-commit run --all-files
 ```
 
-Pre-commit installs the hook directly from GitHub; it does not need a PyPI
-publication or a dependency on Ruff in the repository being checked.
+Pre-commit installs the hook directly from GitHub. The repository being checked
+does not need a dependency on Ruff for this hook.

@@ -1,22 +1,14 @@
-"""Apply a Ruff suppression policy to source and TOML files."""
+"""Reject suppressions for protected Ruff rules in active code paths."""
 
 from __future__ import annotations
 
-import fnmatch
 from dataclasses import dataclass
 from pathlib import Path
 
-from .policy_config import PathRule, Policy
+from .policy_config import Policy
 from .python_comments import Suppression, iter_suppressions
-from .selectors import (
-    selector_covers,
-    suppression_hits_forbidden,
-    suppression_is_allowed,
-)
-from .toml_config import RuffConfigError, load_ruff_config
-
-_RUFF_CONFIG_NAMES = {"pyproject.toml", "ruff.toml", ".ruff.toml"}
-_DEFAULT_SELECT = ("E4", "E7", "E9", "F")
+from .selectors import selector_covers, selectors_intersect
+from .toml_config import DEFAULT_SELECT, RuffConfig, RuffConfigError, find_ruff_config, load_ruff_config
 
 
 @dataclass(frozen=True)
@@ -33,11 +25,12 @@ class Violation:
 
 
 class PolicyChecker:
-    """Check files against a resolved policy."""
+    """Check Python files against protected Ruff selectors."""
 
     def __init__(self, policy: Policy, *, repository_root: Path | None = None) -> None:
         self.policy = policy
         self.repository_root = (repository_root or Path.cwd()).resolve()
+        self._config_cache: dict[Path, RuffConfig | RuffConfigError] = {}
 
     def check_files(self, filenames: tuple[str, ...]) -> list[Violation]:
         """Return violations for the supplied pre-commit filenames."""
@@ -48,8 +41,6 @@ class PolicyChecker:
                 continue
             if path.suffix == ".py":
                 violations.extend(self._check_python(path))
-            elif path.name in _RUFF_CONFIG_NAMES:
-                violations.extend(self._check_ruff_toml(path))
         return sorted(violations, key=lambda item: (item.path, item.line or 0, item.message))
 
     def _display_path(self, path: Path) -> str:
@@ -58,169 +49,70 @@ class PolicyChecker:
         except ValueError:
             return str(path)
 
-    def _path_rules_for(self, path: str) -> tuple[PathRule, ...]:
-        return tuple(rule for rule in self.policy.path_rules if fnmatch.fnmatchcase(path, rule.pattern))
-
-    def _path_rules_for_target(self, target: str) -> tuple[PathRule, ...]:
-        normalized = target.replace("\\", "/")
-        return tuple(
-            rule
-            for rule in self.policy.path_rules
-            if fnmatch.fnmatchcase(normalized, rule.pattern) or fnmatch.fnmatchcase(rule.pattern, normalized)
-        )
-
-    @staticmethod
-    def _allowed_selectors(path_rules: tuple[PathRule, ...]) -> tuple[str, ...]:
-        return tuple(selector for rule in path_rules for selector in rule.allow)
-
     def _check_python(self, path: Path) -> list[Violation]:
         display_path = self._display_path(path)
-        path_rules = self._path_rules_for(display_path)
+        try:
+            config = self._ruff_config_for(path)
+        except RuffConfigError as error:
+            return [Violation(display_path, None, str(error).split(": ", 1)[-1])]
+
+        relative_path = display_path
+        active_rules = self._active_rules(config, relative_path)
         violations: list[Violation] = []
         for suppression in iter_suppressions(path):
-            violations.extend(self._check_suppression(display_path, suppression, path_rules))
+            violations.extend(self._check_suppression(display_path, suppression, active_rules))
         return violations
 
     def _check_suppression(
-        self, display_path: str, suppression: Suppression, path_rules: tuple[PathRule, ...]
+        self, display_path: str, suppression: Suppression, active_rules: tuple[str, ...]
     ) -> list[Violation]:
+        if not active_rules:
+            return []
         if suppression.selectors is None:
             return [
                 Violation(
                     display_path,
                     suppression.line,
-                    "blanket Ruff suppression is not allowed; name the specific rule selectors",
+                    "blanket Ruff suppression disables protected selector(s): " + ", ".join(active_rules),
                 )
             ]
 
-        allowed = self.policy.allow + self._allowed_selectors(path_rules)
         forbidden = tuple(
             selector
             for selector in suppression.selectors
-            if self.policy.mode == "forbid"
-            and suppression_hits_forbidden(selector, self.policy.rules)
-            and not suppression_is_allowed(selector, self._allowed_selectors(path_rules))
-        )
-        disallowed = tuple(
-            selector
-            for selector in suppression.selectors
-            if self.policy.mode == "deny-all" and not suppression_is_allowed(selector, allowed)
+            if any(selectors_intersect(selector, rule) for rule in active_rules)
         )
         if forbidden:
             return [
                 Violation(
                     display_path,
                     suppression.line,
-                    f"Ruff suppression disables forbidden selector(s): {', '.join(forbidden)}",
-                )
-            ]
-        if disallowed:
-            return [
-                Violation(
-                    display_path,
-                    suppression.line,
-                    f"Ruff suppression is not allowed for selector(s): {', '.join(disallowed)}",
+                    f"Ruff suppression disables protected selector(s): {', '.join(forbidden)}",
                 )
             ]
         return []
 
-    def _check_ruff_toml(self, path: Path) -> list[Violation]:
+    def _ruff_config_for(self, path: Path) -> RuffConfig | None:
+        config_path = find_ruff_config(path, self.repository_root)
+        if config_path is None:
+            return None
+        cached = self._config_cache.get(config_path)
+        if cached is not None:
+            if isinstance(cached, RuffConfigError):
+                raise cached
+            return cached
         try:
-            config = load_ruff_config(path)
+            config = load_ruff_config(config_path)
         except RuffConfigError as error:
-            return [Violation(self._display_path(path), None, str(error).split(": ", 1)[-1])]
+            self._config_cache[config_path] = error
+            raise error
+        self._config_cache[config_path] = config
+        return config
 
-        violations: list[Violation] = []
-        for selectors in config.global_ignores:
-            violations.extend(self._check_config_selectors(path, selectors, "global Ruff ignore", ()))
-        for target, selectors in config.per_file_ignores:
-            path_rules = self._path_rules_for_target(target)
-            violations.extend(
-                self._check_config_selectors(path, selectors, f"Ruff per-file ignore for {target!r}", path_rules)
+    def _active_rules(self, config: RuffConfig | None, relative_path: str) -> tuple[str, ...]:
+        if config is None:
+            selected = DEFAULT_SELECT
+            return tuple(
+                rule for rule in self.policy.rules if any(selector_covers(selector, rule) for selector in selected)
             )
-        violations.extend(self._check_limits(path, config.max_complexity, config.max_branches))
-        if self.policy.require_selected:
-            violations.extend(self._check_selected(path, config))
-        return violations
-
-    def _check_config_selectors(
-        self, path: Path, selectors: tuple[str, ...], context: str, path_rules: tuple[PathRule, ...]
-    ) -> list[Violation]:
-        allowed = self.policy.allow + self._allowed_selectors(path_rules)
-        forbidden = tuple(
-            selector
-            for selector in selectors
-            if self.policy.mode == "forbid"
-            and suppression_hits_forbidden(selector, self.policy.rules)
-            and not suppression_is_allowed(selector, self._allowed_selectors(path_rules))
-        )
-        disallowed = tuple(
-            selector
-            for selector in selectors
-            if self.policy.mode == "deny-all" and not suppression_is_allowed(selector, allowed)
-        )
-        display_path = self._display_path(path)
-        if forbidden:
-            return [
-                Violation(
-                    display_path,
-                    None,
-                    f"{context} disables forbidden selector(s): {', '.join(forbidden)}",
-                )
-            ]
-        if disallowed:
-            return [
-                Violation(
-                    display_path,
-                    None,
-                    f"{context} is not allowed for selector(s): {', '.join(disallowed)}",
-                )
-            ]
-        return []
-
-    def _check_limits(self, path: Path, max_complexity: int | None, max_branches: int | None) -> list[Violation]:
-        display_path = self._display_path(path)
-        violations: list[Violation] = []
-        if (
-            self.policy.max_complexity is not None
-            and max_complexity is not None
-            and max_complexity > self.policy.max_complexity
-        ):
-            violations.append(
-                Violation(
-                    display_path,
-                    None,
-                    f"max-complexity must not exceed {self.policy.max_complexity}",
-                )
-            )
-        if (
-            self.policy.max_branches is not None
-            and max_branches is not None
-            and max_branches > self.policy.max_branches
-        ):
-            violations.append(
-                Violation(
-                    display_path,
-                    None,
-                    f"max-branches must not exceed {self.policy.max_branches}",
-                )
-            )
-        return violations
-
-    def _check_selected(self, path: Path, config) -> list[Violation]:
-        if self.policy.mode != "forbid":
-            return []
-        selected = config.select if config.select is not None else _DEFAULT_SELECT
-        selected = selected + config.extend_select
-        missing = tuple(
-            rule for rule in self.policy.rules if not any(selector_covers(selector, rule) for selector in selected)
-        )
-        if not missing:
-            return []
-        return [
-            Violation(
-                self._display_path(path),
-                None,
-                f"required Ruff selector(s) are not selected: {', '.join(missing)}",
-            )
-        ]
+        return tuple(rule for rule in self.policy.rules if config.is_enabled(rule, relative_path))

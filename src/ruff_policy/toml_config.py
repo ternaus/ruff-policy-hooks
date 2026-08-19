@@ -1,7 +1,8 @@
-"""Extract the Ruff settings relevant to suppression policy."""
+"""Read the Ruff settings needed to resolve active rules for each file."""
 
 from __future__ import annotations
 
+import fnmatch
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
     import tomli as tomllib
 
-from .selectors import parse_selectors
+from .selectors import parse_selectors, selector_covers, selectors_intersect
+
+_RUFF_CONFIG_NAMES = ("ruff.toml", ".ruff.toml", "pyproject.toml")
+DEFAULT_SELECT = ("E4", "E7", "E9", "F")
 
 
 class RuffConfigError(ValueError):
@@ -21,15 +25,29 @@ class RuffConfigError(ValueError):
 
 @dataclass(frozen=True)
 class RuffConfig:
-    """Ruff settings needed by the policy checker."""
+    """Ruff settings needed to determine whether a rule is active for a file."""
 
     path: Path
     global_ignores: tuple[tuple[str, ...], ...]
     per_file_ignores: tuple[tuple[str, tuple[str, ...]], ...]
     select: tuple[str, ...] | None
     extend_select: tuple[str, ...]
-    max_complexity: int | None
-    max_branches: int | None
+
+    def is_enabled(self, rule: str, relative_path: str) -> bool:
+        """Return whether Ruff enables *rule* for *relative_path*."""
+        selected = self.select if self.select is not None else DEFAULT_SELECT
+        selected = selected + self.extend_select
+        if not any(selector_covers(selector, rule) for selector in selected):
+            return False
+
+        ignored = tuple(selector for selectors in self.global_ignores for selector in selectors)
+        ignored += tuple(
+            selector
+            for target, selectors in self.per_file_ignores
+            if fnmatch.fnmatchcase(relative_path, target)
+            for selector in selectors
+        )
+        return not any(selectors_intersect(rule, selector) for selector in ignored)
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -74,23 +92,6 @@ def _collect_per_file_ignores(
     return tuple(entries)
 
 
-def _nested_int(section: Mapping[str, Any], group: str, key: str) -> int | None:
-    value = _mapping(section.get(group)).get(key)
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"Ruff setting {group}.{key!s} must be an integer")
-    return value
-
-
-def _get_nested_int(base: Mapping[str, Any], lint: Mapping[str, Any], group: str, key: str) -> int | None:
-    for section in (lint, base):
-        value = _nested_int(section, group, key)
-        if value is not None:
-            return value
-    return None
-
-
 def load_ruff_config(path: Path) -> RuffConfig:
     """Load a supported Ruff TOML file."""
     try:
@@ -123,18 +124,24 @@ def load_ruff_config(path: Path) -> RuffConfig:
         for entry in _collect_per_file_ignores(root, lint, path=path, key=key)
     )
 
-    try:
-        max_complexity = _get_nested_int(root, lint, "mccabe", "max-complexity")
-        max_branches = _get_nested_int(root, lint, "pylint", "max-branches")
-    except ValueError as error:
-        raise RuffConfigError(f"{path}: {error}") from error
-
     return RuffConfig(
         path=path,
         global_ignores=global_ignores,
         per_file_ignores=per_file_ignores,
         select=select,
         extend_select=extend_select,
-        max_complexity=max_complexity,
-        max_branches=max_branches,
     )
+
+
+def find_ruff_config(path: Path, repository_root: Path) -> Path | None:
+    """Find the nearest Ruff configuration between *path* and the repository root."""
+    root = repository_root.resolve()
+    directory = path.resolve().parent
+    while True:
+        for name in _RUFF_CONFIG_NAMES:
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
+        if directory == root or root not in directory.parents:
+            return None
+        directory = directory.parent
