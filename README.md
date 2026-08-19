@@ -1,7 +1,7 @@
 # ruff-policy-hooks
 
-This pre-commit hook stops `noqa` comments from hiding Ruff diagnostics that
-your repository wants to keep visible.
+This pre-commit hook protects selected Ruff rules from being disabled in
+source code with `noqa` comments.
 
 You list the protected Ruff selectors in the hook. The hook reads the
 repository's Ruff configuration to decide whether each selector is active for
@@ -10,49 +10,57 @@ the file being checked. Ruff remains the source of truth for that scope.
 The hook does not validate or change Ruff configuration. It does not run Ruff
 or calculate complexity.
 
-## Why this hook exists
+## Goal
 
-Ruff warns when code is too complex. A rushed contributor or coding agent can
-make that warning disappear by adding `# noqa` instead of refactoring. The
-change can look like one harmless comment and be easy to miss in code review.
+Ruff configuration decides which rules apply to each Python file. When a
+protected rule is enabled for a file, it must remain enabled throughout that
+file.
 
-This hook blocks that shortcut for the rules you protect. A `# noqa` comment is
-called a suppression: it tells Ruff to skip a diagnostic.
+A developer or AI coding agent may try to make the rule disappear for one
+function or line by adding `# noqa`. The hook rejects that code change. The
+code must be refactored, or the Ruff configuration must deliberately exclude
+that path.
+
+This is an automated guardrail for code changes made by both developers and AI
+agents. It prevents a local suppression from quietly bypassing a rule or
+passing unnoticed in code review.
 
 ## Example: protect C901
 
-Suppose you want Ruff's C901 complexity check to remain active in `src/`:
+Suppose Ruff enables `C901` for `src/`, and the hook protects that rule:
 
 ```yaml
 args: [--protect=C901]
 ```
 
-This code now fails the pre-commit hook:
+This code in `src/` fails the pre-commit hook:
 
 ```python
 def build_result():  # noqa: C901
     ...
 ```
 
-The expected fix is a refactor. Broader selectors such as `C9` and `ALL`, and
-blanket `# noqa` comments, fail for the same reason.
+The expected fix is to refactor `build_result`. Broader selectors such as `C9`
+and `ALL`, and blanket `# noqa` comments, fail for the same reason: they can
+hide `C901`.
 
-Suppressions for unrelated rules remain allowed:
+Suppressions for unrelated rules remain allowed. For example, this is allowed
+when `F401` is not protected:
 
 ```python
 import optional_module  # noqa: F401
 ```
 
-If Ruff disables C901 for tests, the hook leaves that path alone:
+If Ruff disables `C901` for `tests/`, the hook does not enforce it there:
 
 ```toml
 [tool.ruff.lint]
-select = ["C90"]
+select = ["C901"]
 per-file-ignores = { "tests/*" = ["C901"] }
 ```
 
-The same `# noqa: C901` is allowed in `tests/` and still blocked in `src/`. The
-hook follows the nearest Ruff configuration for each Python file, including
+The same `# noqa: C901` is therefore allowed in `tests/` and blocked in `src/`.
+The hook follows the nearest Ruff configuration for each Python file, including
 `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores`, and
 `extend-per-file-ignores`.
 
