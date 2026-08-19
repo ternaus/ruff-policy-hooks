@@ -3,6 +3,10 @@
 This pre-commit hook stops `noqa` comments from hiding the Ruff rules that your
 repository uses to control code complexity.
 
+The original use case was a coding agent that sees a complexity diagnostic and
+adds `# noqa` to make the check disappear. The intended response is a refactor.
+This hook blocks that shortcut wherever Ruff has the protected rule enabled.
+
 You list the protected Ruff selectors in the hook. The hook reads the
 repository's Ruff configuration to decide whether each selector is active for
 the file being checked. Ruff remains the source of truth for that scope.
