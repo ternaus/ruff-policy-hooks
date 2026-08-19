@@ -1,12 +1,50 @@
 # ruff-policy-hooks
 
-`ruff-policy-hooks` is a pre-commit hook that prevents accidental suppression
-of Ruff diagnostics. It checks Python `noqa` comments and Ruff TOML
-configuration. It does not run Ruff, edit files, or calculate code complexity.
+Ruff can find code that is too complex, but a contributor or coding agent can
+silence that warning with `# noqa` or a Ruff ignore setting. This pre-commit
+hook protects the Ruff rules that your repository considers mandatory.
+
+It blocks a commit when a protected rule is disabled in Python code or in a
+Ruff TOML configuration. It does not run Ruff, change files, or calculate code
+complexity.
+
+## What the hook forbids
+
+With a policy such as `--forbid=C901,PLR0912`, the hook forbids:
+
+- `# noqa: C901` and `# ruff: noqa: PLR0912` in Python files;
+- broader selectors such as `C9` or `ALL`, because they also disable a
+  protected rule;
+- Ruff `ignore`, `extend-ignore`, and matching `per-file-ignores` settings;
+- raising `max-complexity` or `max-branches` beyond the configured limits.
+
+The last item is checked only when the corresponding limit is configured. A
+suppression for an unrelated rule remains allowed in `forbid` mode:
+
+```python
+unused_import = value  # noqa: F401  — allowed when only C901 is protected
+complex_function()  # noqa: C901  — blocked
+```
+
+Blanket suppressions are always blocked. The hook requires a rule name, even
+when a path exception exists:
+
+```python
+value = build_value()  # noqa  — blocked
+```
+
+With `--deny-all`, every rule suppression is blocked unless that rule is
+explicitly allowlisted. Use this mode when the repository does not want
+silenced Ruff diagnostics at all.
+
+The hook checks only files passed to it by pre-commit. Therefore, the
+repository's `files` and `exclude` settings decide where the policy applies.
+Run `pre-commit run --all-files` in CI when the whole repository must be
+audited.
 
 ## Install with pre-commit
 
-Add the hook to `.pre-commit-config.yaml` and pin a release tag:
+Add the hook and pin a release tag:
 
 ```yaml
 repos:
@@ -18,13 +56,9 @@ repos:
         files: ^(src/|tools/|pyproject\.toml$)
 ```
 
-The hook receives the files selected by pre-commit. Use
-`pre-commit run --all-files` in CI when the policy must be audited across the
-whole repository.
-
 ## Choose a policy
 
-Use `--forbid` when a repository has a small set of mandatory Ruff rules:
+Use `--forbid` when only a few Ruff rules are mandatory:
 
 ```yaml
 args:
@@ -33,60 +67,53 @@ args:
   - --max-branches=12
 ```
 
-The hook rejects exact and broader selectors that overlap a forbidden rule.
-For example, forbidding `C901` also rejects `C9` and `ALL` in a suppression.
-
-Use `--deny-all` when every suppression must be explicitly allowlisted:
+Use `--deny-all` when every suppression must be explicitly allowed:
 
 ```yaml
 args: [--deny-all, --allow=F401,E501]
 ```
 
-Blanket `# noqa` comments are rejected in both modes. The hook requires a
-specific selector even when a path exception is configured.
-
-## Scoped exceptions
-
-For path-specific exceptions, keep the policy in a committed file such as
-`.ruff-policy.toml`:
+For path-specific exceptions, keep the policy in a committed file. This
+example permits the protected complexity rules in tests, while keeping them
+forbidden everywhere else:
 
 ```toml
 mode = "forbid"
 rules = ["C901", "PLR0912"]
-max_complexity = 10
-max_branches = 12
-require_selected = true
 
 [[path_rules]]
 pattern = "tests/*"
 allow = ["C901", "PLR0912"]
 ```
 
-Reference it from the hook:
+Reference the file from the hook:
 
 ```yaml
 args: [--policy-file=.ruff-policy.toml]
 ```
 
-Do not combine `--policy-file` with inline policy options. A path rule can
-allow a specific suppression in a matching file or Ruff `per-file-ignores`
-target. It cannot allow a global Ruff ignore. Use pre-commit `files` and
-`exclude` when an entire path should be outside the policy.
+A path rule can allow a specific suppression in a matching file or Ruff
+`per-file-ignores` target. It cannot allow a global Ruff ignore. Use pre-commit
+`files` or `exclude` when an entire path should be outside the policy.
+
+Do not combine `--policy-file` with inline policy options. Add
+`require_selected = true` to a `forbid` policy when protected rules must also
+be present in Ruff's `select` configuration.
+
+## When a commit is blocked
+
+First remove the suppression and simplify or split the code. If the exception
+is intentional, make it narrow: name the exact rule and, when needed, add a
+path-specific allowlist to the policy file. Avoid blanket `# noqa` comments and
+`ALL`; they hide more diagnostics than the exception explains.
 
 ## Supported Ruff configuration
 
-The hook reads `pyproject.toml`, `ruff.toml`, and `.ruff.toml`. It checks both
-the older `[tool.ruff]` layout and the newer `[tool.ruff.lint]` layout,
-including:
-
-- `ignore` and `extend-ignore`;
-- `per-file-ignores` and `extend-per-file-ignores`;
-- optional `max-complexity` and `max-branches` limits;
-- optional selection checks with `require_selected = true`.
-
-The hook uses `tokenize` and TOML parsing from the Python standard library or
-the `tomli` compatibility package on Python 3.10. It has no dependency on Ruff
-or on the project being checked.
+The hook reads `pyproject.toml`, `ruff.toml`, and `.ruff.toml`, in both the
+older `[tool.ruff]` layout and the newer `[tool.ruff.lint]` layout. It checks
+`ignore`, `extend-ignore`, `per-file-ignores`, and
+`extend-per-file-ignores`, plus the optional complexity limits and selection
+requirement described above.
 
 ## Local development
 
@@ -100,5 +127,5 @@ ruff format --check .
 pre-commit run --all-files
 ```
 
-The repository is released from immutable Git tags. The hook does not need a
-PyPI publication: pre-commit installs it directly from GitHub.
+Pre-commit installs the hook directly from GitHub; it does not need a PyPI
+publication or a dependency on Ruff in the repository being checked.
