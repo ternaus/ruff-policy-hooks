@@ -35,3 +35,11 @@ def test_policy_file_rejects_ambiguous_allowlist(tmp_path: Path) -> None:
 
     with pytest.raises(PolicyConfigError, match="allow is only valid"):
         load_policy_file(policy_path)
+
+
+def test_policy_file_rejects_empty_forbid_mode(tmp_path: Path) -> None:
+    policy_path = tmp_path / ".ruff-policy.toml"
+    policy_path.write_text("mode = 'forbid'\n", encoding="utf-8")
+
+    with pytest.raises(PolicyConfigError, match="requires at least one rule"):
+        load_policy_file(policy_path)

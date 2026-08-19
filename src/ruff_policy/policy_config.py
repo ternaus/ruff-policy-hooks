@@ -104,6 +104,10 @@ def _build_policy(data: Mapping[str, Any]) -> Policy:
     require_selected = data.get("require_selected", False)
     if not isinstance(require_selected, bool):
         raise PolicyConfigError("require_selected must be a boolean")
+    if mode == "forbid" and not rules:
+        raise PolicyConfigError("forbid mode requires at least one rule")
+    if mode == "deny-all" and require_selected:
+        raise PolicyConfigError("require_selected is only valid in forbid mode")
 
     return Policy(
         mode=mode,
