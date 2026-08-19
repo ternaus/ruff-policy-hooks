@@ -1,0 +1,13 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-ruff-suppressions-self
+        name: Check this repository's Ruff suppression policy
+        entry: python -m ruff_policy check --forbid=C901,PLR0912 --max-complexity=10 --max-branches=12 --require-selected
+        language: system
+        types_or: [python, toml]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.3
+    hooks:
+      - id: ruff
+      - id: ruff-format
