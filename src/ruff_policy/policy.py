@@ -1,4 +1,4 @@
-"""Reject suppressions for protected Ruff rules in active code paths."""
+"""Reject disabled protected Ruff rules and their suppressions."""
 
 from __future__ import annotations
 
@@ -34,14 +34,54 @@ class PolicyChecker:
 
     def check_files(self, filenames: tuple[str, ...]) -> list[Violation]:
         """Return violations for the supplied pre-commit filenames."""
-        violations: list[Violation] = []
+        violations = self._check_configurations(filenames)
         for filename in filenames:
             path = Path(filename)
             if not path.exists():
                 continue
             if path.suffix == ".py":
                 violations.extend(self._check_python(path))
-        return sorted(violations, key=lambda item: (item.path, item.line or 0, item.message))
+        return sorted(set(violations), key=lambda item: (item.path, item.line or 0, item.message))
+
+    def _check_configurations(self, filenames: tuple[str, ...]) -> list[Violation]:
+        violations: list[Violation] = []
+        checked_configs: set[Path] = set()
+        for filename in filenames:
+            path = Path(filename)
+            if path.suffix not in {".py", ".toml"}:
+                continue
+
+            config_path = find_ruff_config(path, self.repository_root)
+            if config_path is None:
+                violations.append(
+                    Violation(
+                        self._display_path(path),
+                        None,
+                        "Ruff configuration is required for protected selector(s): " + ", ".join(self.policy.rules),
+                    )
+                )
+                continue
+            if config_path in checked_configs:
+                continue
+            checked_configs.add(config_path)
+
+            try:
+                config = self._ruff_config_for(config_path)
+            except RuffConfigError as error:
+                violations.append(self._configuration_error(config_path, error))
+                continue
+            if config is None:
+                continue
+            violations.extend(
+                Violation(
+                    self._display_path(config_path),
+                    None,
+                    f"protected Ruff selector is not enabled by global configuration: {rule}",
+                )
+                for rule in self.policy.rules
+                if not config.is_globally_enabled(rule)
+            )
+        return violations
 
     def _display_path(self, path: Path) -> str:
         try:
@@ -51,10 +91,13 @@ class PolicyChecker:
 
     def _check_python(self, path: Path) -> list[Violation]:
         display_path = self._display_path(path)
+        config_path = find_ruff_config(path, self.repository_root)
         try:
             config = self._ruff_config_for(path)
         except RuffConfigError as error:
-            return [Violation(display_path, None, str(error).split(": ", 1)[-1])]
+            if config_path is None:
+                return [Violation(display_path, None, str(error).split(": ", 1)[-1])]
+            return [self._configuration_error(config_path, error)]
 
         relative_path = display_path
         active_rules = self._active_rules(config, relative_path)
@@ -62,6 +105,9 @@ class PolicyChecker:
         for suppression in iter_suppressions(path):
             violations.extend(self._check_suppression(display_path, suppression, active_rules))
         return violations
+
+    def _configuration_error(self, config_path: Path, error: RuffConfigError) -> Violation:
+        return Violation(self._display_path(config_path), None, str(error).split(": ", 1)[-1])
 
     def _check_suppression(
         self, display_path: str, suppression: Suppression, active_rules: tuple[str, ...]

@@ -2,4 +2,4 @@
   name: Check Ruff suppression policy
   entry: ruff-policy check
   language: python
-  types: [python]
+  types_or: [python, toml]

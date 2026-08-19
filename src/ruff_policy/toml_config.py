@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
 
 from .selectors import parse_selectors, selector_covers, selectors_intersect
 
-_RUFF_CONFIG_NAMES = ("ruff.toml", ".ruff.toml", "pyproject.toml")
+_RUFF_CONFIG_NAMES = (".ruff.toml", "ruff.toml", "pyproject.toml")
 DEFAULT_SELECT = ("E4", "E7", "E9", "F")
 
 
@@ -33,14 +33,26 @@ class RuffConfig:
     select: tuple[str, ...] | None
     extend_select: tuple[str, ...]
 
-    def is_enabled(self, rule: str, relative_path: str) -> bool:
-        """Return whether Ruff enables *rule* for *relative_path*."""
+    def _flattened_global_ignores(self) -> tuple[str, ...]:
+        """Return global ignore selectors as one tuple."""
+        return tuple(selector for selectors in self.global_ignores for selector in selectors)
+
+    def is_globally_enabled(self, rule: str) -> bool:
+        """Return whether Ruff enables *rule* in the repository configuration."""
         selected = self.select if self.select is not None else DEFAULT_SELECT
         selected = selected + self.extend_select
         if not any(selector_covers(selector, rule) for selector in selected):
             return False
 
-        ignored = tuple(selector for selectors in self.global_ignores for selector in selectors)
+        ignored = self._flattened_global_ignores()
+        return not any(selectors_intersect(rule, selector) for selector in ignored)
+
+    def is_enabled(self, rule: str, relative_path: str) -> bool:
+        """Return whether Ruff enables *rule* for *relative_path*."""
+        if not self.is_globally_enabled(rule):
+            return False
+
+        ignored = self._flattened_global_ignores()
         ignored += tuple(
             selector
             for target, selectors in self.per_file_ignores
@@ -92,18 +104,39 @@ def _collect_per_file_ignores(
     return tuple(entries)
 
 
-def load_ruff_config(path: Path) -> RuffConfig:
-    """Load a supported Ruff TOML file."""
+def _load_toml(path: Path) -> Mapping[str, Any]:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise RuffConfigError(f"{path}: cannot parse TOML: {error}") from error
+    return data
 
+
+def _ruff_root(data: Mapping[str, Any], path: Path) -> Mapping[str, Any]:
     if path.name == "pyproject.toml":
         tool = _mapping(data.get("tool"))
-        root = _mapping(tool.get("ruff"))
-    else:
-        root = _mapping(data)
+        return _mapping(tool.get("ruff"))
+    return data
+
+
+def _extend_path(root: Mapping[str, Any], path: Path) -> Path | None:
+    extend = root.get("extend")
+    if extend is None:
+        return None
+    if not isinstance(extend, str) or not extend:
+        raise RuffConfigError(f"{path}: Ruff setting 'extend' must be a non-empty string")
+    return (path.parent / extend).resolve()
+
+
+def _load_ruff_config(path: Path, stack: frozenset[Path]) -> RuffConfig:
+    if path in stack:
+        raise RuffConfigError(f"{path}: recursive Ruff configuration extension")
+
+    data = _load_toml(path)
+    root = _ruff_root(data, path)
+    base_path = _extend_path(root, path)
+    base = _load_ruff_config(base_path, stack | {path}) if base_path is not None else None
+
     lint = _mapping(root.get("lint"))
 
     select_value = lint.get("select", root.get("select"))
@@ -124,13 +157,38 @@ def load_ruff_config(path: Path) -> RuffConfig:
         for entry in _collect_per_file_ignores(root, lint, path=path, key=key)
     )
 
-    return RuffConfig(
+    config = RuffConfig(
         path=path,
         global_ignores=global_ignores,
         per_file_ignores=per_file_ignores,
         select=select,
         extend_select=extend_select,
     )
+    if base is None:
+        return config
+    return RuffConfig(
+        path=path,
+        global_ignores=base.global_ignores + config.global_ignores,
+        per_file_ignores=base.per_file_ignores + config.per_file_ignores,
+        select=config.select if config.select is not None else base.select,
+        extend_select=base.extend_select + config.extend_select,
+    )
+
+
+def load_ruff_config(path: Path) -> RuffConfig:
+    """Load a supported Ruff TOML file and its inherited configuration."""
+    return _load_ruff_config(path.resolve(), frozenset())
+
+
+def _is_ruff_config(path: Path) -> bool:
+    if path.name != "pyproject.toml":
+        return True
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return True
+    tool = _mapping(data.get("tool"))
+    return "ruff" in tool
 
 
 def find_ruff_config(path: Path, repository_root: Path) -> Path | None:
@@ -140,7 +198,7 @@ def find_ruff_config(path: Path, repository_root: Path) -> Path | None:
     while True:
         for name in _RUFF_CONFIG_NAMES:
             candidate = directory / name
-            if candidate.is_file():
+            if candidate.is_file() and _is_ruff_config(candidate):
                 return candidate
         if directory == root or root not in directory.parents:
             return None
