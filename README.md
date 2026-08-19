@@ -89,7 +89,7 @@ Add the hook and pin a release tag:
 ```yaml
 repos:
   - repo: https://github.com/ternaus/ruff-policy-hooks
-    rev: v0.3.0
+    rev: v0.4.0
     hooks:
       - id: check-ruff-suppressions
         args: [--protect=C901,PLR0912]
